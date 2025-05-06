@@ -1,0 +1,11 @@
+flask
+opencv-python
+numpy
+ultralytics
+requests
+python-dotenv
+scipy
+torch
+torchvision
+pillow
+urllib3==1.26.15
