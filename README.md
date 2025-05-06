@@ -1,4 +1,4 @@
-# 🚇 Metro Crowd Indicator System
+# 🚇 Metro Crowd Detection System
 
 <p align="center">
   <img src="Demo/Metro_Coach_Color_change_GIF.gif" alt="Metro Crowd Indicator" width="800">
@@ -97,4 +97,3 @@ else:
 ```
 ➡️ Adjust thresholds and RGB color values to your preference
 
-# Metro-Crowd-Detection
