@@ -96,6 +96,27 @@
         .bogie-card:hover {
             transform: scale(1.02);
         }
+        .train-diagram {
+            margin: 10px 0;
+        }
+        
+        .train-car {
+            width: 30px;
+            height: 20px;
+            background-color: #e9ecef;
+            border: 1px solid #ced4da;
+            margin: 0 2px;
+            text-align: center;
+            font-size: 12px;
+            line-height: 20px;
+            border-radius: 3px;
+        }
+        
+        .active-car {
+            background-color: #2575fc;
+            color: white;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -120,6 +141,16 @@
                             <button class="btn btn-primary" id="browseBtn">Browse Files</button>
                             <div id="fileList" class="mt-3"></div>
                         </div>
+                         <!-- Add this right after the upload-area div -->
+                         <div class="alert alert-info mt-3">
+                             <i class="fas fa-info-circle"></i> <strong>How to use:</strong>
+                             <ol>
+                                 <li>Upload images of metro bogies using drag & drop or the browse button</li>
+                                 <li>For each image, select which bogie it belongs to using the dropdown</li>
+                                 <li>You can upload multiple images of the same bogie for more accurate analysis</li>
+                                 <li>Click "Analyze Crowd Distribution" when ready</li>
+                             </ol>
+                         </div>
                          <div class="mt-4">
                             <h5><i class="fas fa-subway-station"></i> Platform Analysis</h5>
                             <p>Upload an image of the station platform to analyze crowd density and adjust train frequency</p>
@@ -314,12 +345,51 @@
                 files.forEach((file, index) => {
                     const fileItem = document.createElement('div');
                     fileItem.className = 'alert alert-secondary d-flex justify-content-between align-items-center';
-                    fileItem.innerHTML = `
-                        <span><i class="fas fa-file-image"></i> Bogie ${index + 1}: ${file.name}</span>
-                        <button class="btn btn-sm btn-danger remove-file" data-index="${index}">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    `;
+                    
+                    // Create bogie selector dropdown
+                    const bogieSelector = document.createElement('select');
+                    bogieSelector.className = 'form-select form-select-sm bogie-selector';
+                    bogieSelector.style.width = '120px';
+                    bogieSelector.setAttribute('data-index', index);
+                    
+                    // Add options for 6 bogies
+                    for (let i = 1; i <= 6; i++) {
+                        const option = document.createElement('option');
+                        option.value = i;
+                        option.textContent = `Bogie ${i}`;
+                        // Default to sequential assignment
+                        if (i === (index % 6) + 1) {
+                            option.selected = true;
+                        }
+                        bogieSelector.appendChild(option);
+                    }
+                    
+                    // Create a container for the file info
+                    const fileInfo = document.createElement('div');
+                    fileInfo.innerHTML = `<i class="fas fa-file-image"></i> ${file.name}`;
+                    
+                    // Create a container for the controls
+                    const controlsContainer = document.createElement('div');
+                    controlsContainer.className = 'd-flex align-items-center';
+                    
+                    // Add the bogie selector
+                    const selectorContainer = document.createElement('div');
+                    selectorContainer.className = 'me-2';
+                    selectorContainer.appendChild(document.createTextNode('Bogie: '));
+                    selectorContainer.appendChild(bogieSelector);
+                    controlsContainer.appendChild(selectorContainer);
+                    
+                    // Add the remove button
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'btn btn-sm btn-danger remove-file';
+                    removeBtn.setAttribute('data-index', index);
+                    removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+                    controlsContainer.appendChild(removeBtn);
+                    
+                    // Add the file info and controls to the file item
+                    fileItem.appendChild(fileInfo);
+                    fileItem.appendChild(controlsContainer);
+                    
                     fileList.appendChild(fileItem);
                 });
                 
@@ -349,7 +419,10 @@
             
             // Handle analyze button click
             analyzeBtn.addEventListener('click', function() {
-                if (files.length === 0) return;
+                if (files.length === 0) {
+                    alert("Please select at least one file before analyzing.");
+                    return;
+                }
                 
                 // Show loading indicator
                 loadingIndicator.style.display = 'block';
@@ -357,13 +430,37 @@
                 
                 // Create form data
                 const formData = new FormData();
-                files.forEach(file => {
-                    formData.append('files[]', file);
+                
+                // Log for debugging
+                console.log("Files to upload:", files.length, "files");
+                
+                // Add files with their bogie IDs
+                files.forEach((file, index) => {
+                    // Ensure file is a valid File object
+                    if (file instanceof File) {
+                        formData.append('files[]', file);
+                        
+                        // Get the selected bogie ID (1-6) for this file
+                        const bogieSelector = document.querySelector(`.bogie-selector[data-index="${index}"]`);
+                        const bogieId = bogieSelector ? bogieSelector.value : (index % 6) + 1;
+                        formData.append('bogie_ids[]', bogieId);
+                        
+                        console.log(`Appending file: ${file.name}, size: ${file.size}, type: ${file.type}, bogie: ${bogieId}`);
+                    } else {
+                        console.error("Invalid file object:", file);
+                    }
                 });
                 
                 // Add platform image if available
                 if (platformFile) {
                     formData.append('platform_image', platformFile);
+                    console.log("Appending platform file:", platformFile.name);
+                }
+                
+                // Log FormData entries (this is tricky but possible)
+                console.log("FormData entries:");
+                for (let pair of formData.entries()) {
+                    console.log(pair[0], pair[1] instanceof File ? `${pair[1].name} (${pair[1].size} bytes)` : pair[1]);
                 }
                 
                 // Send request to server
@@ -377,95 +474,179 @@
                     loadingIndicator.style.display = 'none';
                     
                     if (data.error) {
-                        alert(data.error);
+                        console.error("Server error:", data.error);
+                        alert('Error: ' + data.error);
                         return;
                     }
                     
-                    // Display results
+                    // Function to display results
+                    function displayResults(data) {
+                        // Show results section
+                        resultsSection.style.display = 'block';
+                        
+                        // Display summary image
+                        summaryImage.src = '/' + data.summary_image;
+                        
+                        // Display recommendations
+                        recommendations.textContent = data.recommendations;
+                        
+                        // Display Groq analysis with markdown formatting
+                        if (data.groq_analysis) {
+                            groqAnalysis.innerHTML = marked.parse(data.groq_analysis);
+                        } else {
+                            groqAnalysis.innerHTML = '<p>No enhanced analysis available.</p>';
+                        }
+                        
+                        // Display platform results if available
+                        if (data.platform_data) {
+                            platformResultsSection.style.display = 'block';
+                            platformImage.src = '/' + data.platform_data.processed_image;
+                            platformPeopleCount.textContent = data.platform_data.total_people;
+                            platformYoloCount.textContent = data.platform_data.yolo_count;
+                            platformDensityScore.textContent = data.platform_data.density_score.toFixed(2);
+                            
+                            // Set density badge color
+                            platformDensity.textContent = data.platform_data.density_level.charAt(0).toUpperCase() + 
+                                                                data.platform_data.density_level.slice(1);
+                            
+                            if (data.platform_data.density_level === 'low') {
+                                platformDensity.className = 'badge bg-primary rounded-pill';
+                            } else if (data.platform_data.density_level === 'medium') {
+                                platformDensity.className = 'badge bg-warning rounded-pill';
+                            } else {
+                                platformDensity.className = 'badge bg-danger rounded-pill';
+                            }
+                            
+                            // Set train frequency
+                            trainFrequency.textContent = 'Every ' + data.platform_data.train_frequency + ' min';
+                        }
+                        else {
+                            platformResultsSection.style.display = 'none';
+                        }
+                        
+                        // Display individual bogie results
+                        bogieResults.innerHTML = '';
+                        
+                        // Group images by bogie ID
+                        const bogieGroups = {};
+                        
+                        data.processed_images.forEach((imagePath, index) => {
+                            const count = data.counts[index];
+                            const yoloCount = data.yolo_counts ? data.yolo_counts[index] : count;
+                            const groqCount = data.groq_counts ? data.groq_counts[index] : count;
+                            const bogieId = index + 1;
+                            
+                            if (!bogieGroups[bogieId]) {
+                                bogieGroups[bogieId] = {
+                                    images: [],
+                                    count: count,
+                                    yoloCount: yoloCount,
+                                    groqCount: groqCount
+                                };
+                            }
+                            
+                            bogieGroups[bogieId].images.push(imagePath);
+                        });
+                        
+                        // Create cards for each bogie group
+                        Object.keys(bogieGroups).forEach(bogieId => {
+                            const group = bogieGroups[bogieId];
+                            const count = group.count;
+                            const yoloCount = group.yoloCount;
+                            const groqCount = group.groqCount;
+                            
+                            let densityClass = 'low-density';
+                            let densityText = 'Low Density';
+                            
+                            if (count > 10) {
+                                densityClass = 'high-density';
+                                densityText = 'High Density';
+                            } else if (count > 5) {
+                                densityClass = 'medium-density';
+                                densityText = 'Medium Density';
+                            }
+                            
+                            const bogieCard = document.createElement('div');
+                            bogieCard.className = 'col-md-6 mb-4';
+                            bogieCard.innerHTML = `
+                                <div class="card">
+                                    <div class="card-header">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <h5>Bogie ${bogieId}</h5>
+                                            <span class="density-indicator ${densityClass}" title="${densityText}"></span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-8">
+                                                <div class="bogie-image-container">
+                                                    <img src="/${group.images[0]}" class="bogie-image" alt="Bogie ${bogieId}">
+                                                    <div class="bogie-label">Bogie ${bogieId}</div>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <div class="count-comparison">
+                                                    <h6>Passenger Count Comparison:</h6>
+                                                    <table class="table table-sm">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Method</th>
+                                                                <th>Count</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <tr>
+                                                                <td>YOLO</td>
+                                                                <td>${yoloCount}</td>
+                                                            </tr>
+                                                            <tr>
+                                                                <td>Density</td>
+                                                                <td>${count}</td>
+                                                            </tr>
+                                                            <tr>
+                                                                <td>Groq LLM</td>
+                                                                <td>${groqCount}</td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <div class="bogie-position mt-3">
+                                                    <h6>Position in Train:</h6>
+                                                    <div class="train-diagram">
+                                                        ${createTrainDiagram(bogieId, 6)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                            bogieResults.appendChild(bogieCard);
+                        });
+                    }
+                    
+                    // Helper function to create a visual train diagram
+                    function createTrainDiagram(activeBogieId, totalBogies) {
+                        let html = '<div class="d-flex justify-content-center">';
+                        
+                        for (let i = 1; i <= totalBogies; i++) {
+                            const isActive = i === parseInt(activeBogieId);
+                            html += `<div class="train-car ${isActive ? 'active-car' : ''}" title="Bogie ${i}">${i}</div>`;
+                        }
+                        
+                        html += '</div>';
+                        return html;
+                    }
+                    
+                    // Call displayResults with the data
                     displayResults(data);
                 })
                 .catch(error => {
                     loadingIndicator.style.display = 'none';
+                    console.error("Fetch error:", error);
                     alert('Error: ' + error.message);
                 });
             });
-            
-            // Display results
-            function displayResults(data) {
-                // Show results section
-                resultsSection.style.display = 'block';
-                
-                // Display summary image
-                summaryImage.src = '/' + data.summary_image;
-                
-                // Display recommendations
-                recommendations.textContent = data.recommendations;
-                
-                // Display Groq analysis using marked.js for markdown rendering
-                groqAnalysis.innerHTML = marked.parse(data.groq_analysis);
-                
-                // Display platform results if available
-                // Inside the displayResults function where platform data is handled
-                if (data.platform_data) {
-                    platformResultsSection.style.display = 'block';
-                    platformImage.src = '/' + data.platform_data.processed_image;
-                    platformPeopleCount.textContent = data.platform_data.total_people;
-                    platformYoloCount.textContent = data.platform_data.yolo_count;
-                    platformDensityScore.textContent = data.platform_data.density_score.toFixed(2);
-                    
-                    // Set density badge color
-                    platformDensity.textContent = data.platform_data.density_level.charAt(0).toUpperCase() + 
-                                                data.platform_data.density_level.slice(1);
-                    
-                    if (data.platform_data.density_level === 'low') {
-                        platformDensity.className = 'badge bg-primary rounded-pill';
-                    } else if (data.platform_data.density_level === 'medium') {
-                        platformDensity.className = 'badge bg-warning rounded-pill';
-                    } else {
-                        platformDensity.className = 'badge bg-danger rounded-pill';
-                    }
-                    
-                    // Set train frequency
-                    trainFrequency.textContent = 'Every ' + data.platform_data.train_frequency + ' min';
-                }
-                else {
-                    platformResultsSection.style.display = 'none';
-                }
-                
-                // Display individual bogie results
-                bogieResults.innerHTML = '';
-                
-                data.processed_images.forEach((imagePath, index) => {
-                    const count = data.counts[index];
-                    let densityClass = 'low-density';
-                    let densityText = 'Low Density';
-                    
-                    if (count > 10) {
-                        densityClass = 'high-density';
-                        densityText = 'High Density';
-                    } else if (count > 5) {
-                        densityClass = 'medium-density';
-                        densityText = 'Medium Density';
-                    }
-                    
-                    const bogieCard = document.createElement('div');
-                    bogieCard.className = 'col-md-4 mb-4';
-                    bogieCard.innerHTML = `
-                        <div class="card bogie-card">
-                            <div class="card-header d-flex justify-content-between align-items-center">
-                                <span>Bogie ${index + 1}</span>
-                                <span><span class="density-indicator ${densityClass}"></span> ${densityText}</span>
-                            </div>
-                            <img src="/${imagePath}" class="card-img-top" alt="Bogie ${index + 1}">
-                            <div class="card-body">
-                                <h5 class="card-title">Person Count: ${count}</h5>
-                            </div>
-                        </div>
-                    `;
-                    
-                    bogieResults.appendChild(bogieCard);
-                });
-            }
         });
     </script>
 </body>

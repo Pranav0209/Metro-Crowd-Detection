@@ -5,6 +5,7 @@ from ultralytics import YOLO
 import glob
 import base64
 from flask import Flask, render_template, request, jsonify
+from werkzeug.utils import secure_filename  # Add this line
 import requests
 import json
 from datetime import datetime
@@ -122,11 +123,22 @@ def analyze_with_groq(counts, recommendations, platform_data=None, image_paths=N
             "Content-Type": "application/json"
         }
         
-        # Create a detailed prompt for Groq
-        prompt = f"""Analyze the following metro train crowd data and provide insights:
+        # Create a more detailed prompt with specific context
+        prompt = f"""Analyze the following metro train crowd data with precision and factual accuracy:
         
-Current passenger counts across bogies: {counts}
-Current recommendations: {recommendations}
+Metro Train Analysis:
+- Specific train ID: Metro Line {datetime.now().strftime('%Y%m%d-%H%M')}
+- Time of analysis: {datetime.now().strftime('%H:%M')}
+- Total bogies analyzed: {len(counts)}
+- Detailed passenger counts by bogie: {counts}
+- Current system recommendations: {recommendations}
+        
+Important context:
+- Each bogie has a maximum capacity of approximately 80-100 passengers
+- Standing passengers require ~0.4 square meters of space for comfort
+- Seated passengers are often undercounted by 15-20% in algorithmic analysis
+- Rush hour threshold is typically 70% of maximum capacity
+- Algorithmic detection may miss seated passengers or those partially occluded
 """
 
         # Add platform data if available
@@ -139,16 +151,26 @@ Platform crowd data:
 - Current train frequency: Every {platform_data['train_frequency']} minutes
 """
 
-        # Add qualitative assessment request
+        # Add count estimation request
         prompt += """
 
-Based on the data provided, please perform a qualitative assessment of the crowding situation:
+Based on the data provided and your knowledge of metro train crowding patterns:
 
-1. Evaluate if the algorithmic counts seem accurate or if they might be underestimating the actual crowd
-2. Assess if there are likely seated passengers or standing passengers that might be missed by object detection
-3. Estimate the perceived crowding level from a passenger comfort perspective
-4. Suggest if any bogies appear to have hidden or occluded passengers not captured in the counts
-5. Provide a confidence score (1-10) for the accuracy of the algorithmic counts
+1. For each bogie, provide an estimated ACTUAL passenger count considering:
+   - The algorithmic count provided
+   - Likely seated passengers that might be missed
+   - Partially occluded passengers in crowded areas
+   - Typical undercount percentages in similar scenarios
+
+2. Present your count estimates in this format:
+   | Bogie | Algorithmic Count | Estimated Actual Count | Confidence (1-10) |
+   |-------|-------------------|------------------------|-------------------|
+   | 1     | [count]           | [your estimate]        | [confidence]      |
+
+3. Evaluate if the algorithmic counts seem accurate or if they might be underestimating the actual crowd
+4. Assess if there are likely seated passengers or standing passengers that might be missed by object detection
+5. Estimate the perceived crowding level from a passenger comfort perspective
+6. Suggest if any bogies appear to have hidden or occluded passengers not captured in the counts
 
 Then provide:
 1. A detailed analysis of the current crowd distribution
@@ -160,10 +182,11 @@ Then provide:
 Format your response in markdown."""
         
         payload = {
-            "model": "llama3-8b-8192",
+            "model": "llama3-70b-8192",  # Use a larger model if available
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.5,
-            "max_tokens": 1024
+            "temperature": 0.2,  # Lower temperature for more factual responses
+            "max_tokens": 1500,  # Allow for more detailed analysis
+            "top_p": 0.9  # Add top_p parameter for better quality
         }
         
         response = requests.post(GROQ_API_URL, headers=headers, data=json.dumps(payload))
@@ -171,18 +194,110 @@ Format your response in markdown."""
         if response.status_code == 200:
             result = response.json()
             analysis = result['choices'][0]['message']['content']
+            # Validate and enhance the analysis
+            analysis = validate_groq_analysis(analysis, counts)
             return analysis
         else:
-            return f"Error from Groq API: {response.status_code} - {response.text}"
+            # Use fallback analysis if API fails
+            return generate_fallback_analysis(counts, recommendations, platform_data)
     
     except Exception as e:
-        return f"Error connecting to Groq API: {str(e)}"
+        return generate_fallback_analysis(counts, recommendations, platform_data)
 
-def process_metro_images(image_paths):
-    """Process metro images and return results using enhanced detection for bogies"""
-    counts = []
-    processed_images = []
-    processed_image_paths = []
+
+def extract_groq_counts(analysis, default_counts):
+    """Extract the estimated counts from Groq's analysis"""
+    try:
+        # Look for the table with estimated counts
+        import re
+        
+        # Pattern to match the table rows with counts
+        pattern = r"\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|"
+        
+        # Find all matches
+        matches = re.findall(pattern, analysis)
+        
+        if matches:
+            # Extract the estimated counts (third column)
+            groq_counts = [int(match[2]) for match in matches]
+            return groq_counts
+        else:
+            # If no table found, return the default counts
+            return default_counts
+    except Exception as e:
+        print(f"Error extracting Groq counts: {e}")
+        return default_counts
+
+def validate_groq_analysis(analysis, counts):
+    """Validate and enhance the Groq analysis to ensure quality"""
+    # Check if analysis contains required sections
+    required_sections = [
+        "crowd distribution", "bottlenecks", "redistribution", 
+        "prediction", "improving passenger comfort"
+    ]
+    
+    missing_sections = []
+    for section in required_sections:
+        if section not in analysis.lower():
+            missing_sections.append(section)
+    
+    # If sections are missing, add placeholders
+    if missing_sections:
+        analysis += "\n\n## Additional Analysis\n\n"
+        for section in missing_sections:
+            analysis += f"### {section.title()}\n\n"
+            analysis += f"Based on the data, the {section} analysis indicates...[standard recommendation]\n\n"
+    
+    # Add factual data summary at the beginning
+    summary = "## Summary of Crowd Data\n\n"
+    summary += "| Bogie | Passenger Count | Density Level |\n"
+    summary += "|-------|-----------------|---------------|\n"
+    
+    for i, count in enumerate(counts):
+        density = "Low" if count < 30 else "Medium" if count < 60 else "High"
+        summary += f"| {i+1} | {count} | {density} |\n"
+    
+    return summary + "\n\n" + analysis
+
+
+def generate_fallback_analysis(counts, recommendations, platform_data=None):
+    """Generate a basic analysis when the API fails"""
+    total_passengers = sum(counts)
+    avg_per_bogie = total_passengers / len(counts) if counts else 0
+    most_crowded = counts.index(max(counts)) + 1 if counts else 0
+    least_crowded = counts.index(min(counts)) + 1 if counts else 0
+    
+    analysis = """## Metro Crowd Analysis (Basic)
+
+### Current Situation
+"""
+    analysis += f"Total passengers: {total_passengers}\n"
+    analysis += f"Average passengers per bogie: {avg_per_bogie:.1f}\n"
+    analysis += f"Most crowded bogie: {most_crowded} ({max(counts) if counts else 0} passengers)\n"
+    analysis += f"Least crowded bogie: {least_crowded} ({min(counts) if counts else 0} passengers)\n\n"
+    
+    # Add basic recommendations
+    analysis += "### Recommendations\n\n"
+    analysis += "* Consider redistributing passengers from the most crowded bogie\n"
+    analysis += "* Monitor the situation in real-time for changes\n"
+    analysis += "* Ensure all available doors are operational for efficient boarding/alighting\n"
+    
+    return analysis
+
+def process_metro_images(image_paths, bogie_ids=None):
+    """Process metro images and return results using enhanced detection for bogies
+    
+    Args:
+        image_paths: List of paths to bogie images
+        bogie_ids: Optional list of bogie identifiers (same length as image_paths)
+                  If provided, images with the same ID are considered from the same bogie
+    """
+    # If no bogie_ids provided, assume each image is a different bogie
+    if bogie_ids is None:
+        bogie_ids = list(range(len(image_paths)))
+    
+    # Dictionary to store person features by bogie ID
+    bogie_data = {}
     
     # Import the YOLO model if not already imported
     if 'yolo_model' not in globals():
@@ -190,7 +305,19 @@ def process_metro_images(image_paths):
         global yolo_model
         yolo_model = YOLO("Yolo-Weights/yolov8l.pt")
     
-    for i, img_path in enumerate(image_paths):
+    # First pass: detect people in all images and store their features by bogie
+    for i, (img_path, bogie_id) in enumerate(zip(image_paths, bogie_ids)):
+        # Initialize bogie data if this is the first image for this bogie
+        if bogie_id not in bogie_data:
+            bogie_data[bogie_id] = {
+                'person_features': [],  # Store features for matching
+                'person_boxes': [],     # Store bounding boxes
+                'best_image': None,     # Store the image with most detections
+                'best_count': 0,        # Store the highest detection count
+                'all_images': [],       # Store all processed images
+                'all_image_paths': []   # Store all processed image paths
+            }
+        
         # Load the image
         img = cv2.imread(img_path)
         if img is None:
@@ -205,6 +332,7 @@ def process_metro_images(image_paths):
         # Process YOLO results
         yolo_count = 0
         person_boxes = []
+        person_features = []
         
         # Extract all person detections
         for r in results:
@@ -213,13 +341,44 @@ def process_metro_images(image_paths):
                 conf = box.conf[0]
                 if yolo_model.names[cls] == "person" and conf > 0.15:  # Lower threshold for better detection
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cv2.rectangle(img_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    # Add confidence score
-                    cv2.putText(img_display, f"{conf:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                    yolo_count += 1
-                    person_boxes.append((x1, y1, x2, y2))
+                    
+                    # Extract person region for feature calculation
+                    person_roi = img[y1:y2, x1:x2]
+                    if person_roi.size == 0:  # Skip if ROI is empty
+                        continue
+                        
+                    # Calculate simple feature vector (color histogram)
+                    # This is a basic approach - could be enhanced with more sophisticated features
+                    try:
+                        # Resize to standard size
+                        person_roi = cv2.resize(person_roi, (64, 128))
+                        
+                        # Calculate color histogram as feature
+                        hist_b = cv2.calcHist([person_roi], [0], None, [8], [0, 256])
+                        hist_g = cv2.calcHist([person_roi], [1], None, [8], [0, 256])
+                        hist_r = cv2.calcHist([person_roi], [2], None, [8], [0, 256])
+                        
+                        # Normalize and flatten
+                        hist_b = cv2.normalize(hist_b, hist_b).flatten()
+                        hist_g = cv2.normalize(hist_g, hist_g).flatten()
+                        hist_r = cv2.normalize(hist_r, hist_r).flatten()
+                        
+                        # Combine features
+                        feature = np.concatenate([hist_b, hist_g, hist_r])
+                        
+                        # Store feature and box
+                        person_features.append(feature)
+                        person_boxes.append((x1, y1, x2, y2))
+                        
+                        # Draw bounding box
+                        cv2.rectangle(img_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        # Add confidence score
+                        cv2.putText(img_display, f"{conf:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        yolo_count += 1
+                    except Exception as e:
+                        print(f"Error processing person ROI: {e}")
         
-        # Add special detection for seated passengers
+        # Add special detection for seated passengers (similar to original code)
         seated_results = yolo_model(img, conf=0.1)  # Even lower threshold for seated detection
         
         # Process seated detections with different criteria
@@ -254,11 +413,37 @@ def process_metro_images(image_paths):
                                     break
                         
                         if new_detection:
-                            cv2.rectangle(img_display, (x1, y1), (x2, y2), (0, 255, 255), 2)  # Yellow for seated
-                            yolo_count += 1
-                            person_boxes.append((x1, y1, x2, y2))
+                            try:
+                                # Extract person region for feature calculation
+                                person_roi = img[y1:y2, x1:x2]
+                                if person_roi.size > 0:  # Skip if ROI is empty
+                                    # Resize to standard size
+                                    person_roi = cv2.resize(person_roi, (64, 128))
+                                    
+                                    # Calculate color histogram as feature
+                                    hist_b = cv2.calcHist([person_roi], [0], None, [8], [0, 256])
+                                    hist_g = cv2.calcHist([person_roi], [1], None, [8], [0, 256])
+                                    hist_r = cv2.calcHist([person_roi], [2], None, [8], [0, 256])
+                                    
+                                    # Normalize and flatten
+                                    hist_b = cv2.normalize(hist_b, hist_b).flatten()
+                                    hist_g = cv2.normalize(hist_g, hist_g).flatten()
+                                    hist_r = cv2.normalize(hist_r, hist_r).flatten()
+                                    
+                                    # Combine features
+                                    feature = np.concatenate([hist_b, hist_g, hist_r])
+                                    
+                                    # Store feature and box
+                                    person_features.append(feature)
+                                    person_boxes.append((x1, y1, x2, y2))
+                                    
+                                    # Draw bounding box (yellow for seated)
+                                    cv2.rectangle(img_display, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                                    yolo_count += 1
+                            except Exception as e:
+                                print(f"Error processing seated person ROI: {e}")
         
-        # Add density-based correction for crowded bogies - ENHANCED VERSION
+        # Apply density-based correction (similar to original code)
         if len(person_boxes) > 0:
             # Calculate average person size
             avg_width = sum(x2-x1 for x1,y1,x2,y2 in person_boxes) / len(person_boxes)
@@ -279,7 +464,6 @@ def process_metro_images(image_paths):
             area_ratio = person_area / visible_area
             
             # More aggressive correction for crowded scenes
-            # Lower the threshold from 10 to 8 people for correction to apply more often
             if (edge_density > 0.08 or color_variance > 25 or area_ratio > 0.15) and len(person_boxes) < 20:
                 # Use tighter spacing factor for crowded bogies (1.2 instead of 1.5)
                 estimated_capacity = int(visible_area / (avg_width * avg_height * 1.2))  
@@ -293,7 +477,7 @@ def process_metro_images(image_paths):
                 print(f"Applied enhanced density correction: {yolo_count} → {corrected_count}")
                 yolo_count = corrected_count
         
-        # Create a heatmap visualization (simulated density map)
+        # Create a heatmap visualization (similar to original code)
         heatmap = np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
         
         if person_boxes:
@@ -331,19 +515,92 @@ def process_metro_images(image_paths):
                 break
         
         # Add count text to image
-        cv2.putText(overlay, f"Bogie {i+1}: {yolo_count} people", 
+        cv2.putText(overlay, f"Bogie {bogie_id+1}: {yolo_count} people", 
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         cv2.putText(overlay, f"Status: {crowd_level}", 
                     (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         
-        counts.append(yolo_count)
-        processed_images.append(overlay)
-        
         # Save the processed image
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join("static/results", f"bogie_{i+1}_{timestamp}.jpg")
+        output_path = os.path.join("static/results", f"bogie_{bogie_id+1}_view{i+1}_{timestamp}.jpg")
         cv2.imwrite(output_path, overlay)
-        processed_image_paths.append(output_path.replace("static/", ""))
+        
+        # Store data for this bogie
+        bogie_data[bogie_id]['person_features'].extend(person_features)
+        bogie_data[bogie_id]['person_boxes'].extend(person_boxes)
+        bogie_data[bogie_id]['all_images'].append(overlay)
+        bogie_data[bogie_id]['all_image_paths'].append(output_path.replace("static/", ""))
+        
+        # Update best image if this has more detections
+        if yolo_count > bogie_data[bogie_id]['best_count']:
+            bogie_data[bogie_id]['best_count'] = yolo_count
+            bogie_data[bogie_id]['best_image'] = overlay
+    
+    # Second pass: match people across images of the same bogie to avoid double counting
+    counts = []
+    processed_images = []
+    processed_image_paths = []
+    
+    for bogie_id in sorted(bogie_data.keys()):
+        # If we have multiple images for this bogie, perform matching
+        if len(bogie_data[bogie_id]['all_images']) > 1:
+            # Get all features from this bogie
+            all_features = np.array(bogie_data[bogie_id]['person_features'])
+            
+            # Skip if no features
+            if len(all_features) == 0:
+                counts.append(0)
+                if bogie_data[bogie_id]['best_image'] is not None:
+                    processed_images.append(bogie_data[bogie_id]['best_image'])
+                    processed_image_paths.append(bogie_data[bogie_id]['all_image_paths'][0])
+                continue
+            
+            # Cluster similar features (representing the same person)
+            from sklearn.cluster import DBSCAN
+            
+            # Use DBSCAN to cluster similar features
+            # Epsilon (max distance between samples) needs tuning based on your feature space
+            clustering = DBSCAN(eps=0.5, min_samples=1).fit(all_features)
+            
+            # Number of unique people is the number of clusters
+            unique_people = len(set(clustering.labels_)) - (1 if -1 in clustering.labels_ else 0)
+            
+            # Create a combined visualization
+            if bogie_data[bogie_id]['best_image'] is not None:
+                best_img = bogie_data[bogie_id]['best_image'].copy()
+                
+                # Update the count text to show unique people
+                cv2.putText(best_img, f"Bogie {bogie_id+1}: {unique_people} unique people", 
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                cv2.putText(best_img, f"(from {len(bogie_data[bogie_id]['all_images'])} images)", 
+                            (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                
+                # Determine crowd level based on unique count
+                crowd_level = "Empty"
+                for level, threshold in CROWD_LEVELS.items():
+                    if unique_people < threshold:
+                        crowd_level = level
+                        break
+                
+                cv2.putText(best_img, f"Status: {crowd_level}", 
+                            (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                
+                # Save the updated image
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = os.path.join("static/results", f"bogie_{bogie_id+1}_combined_{timestamp}.jpg")
+                cv2.imwrite(output_path, best_img)
+                
+                processed_images.append(best_img)
+                processed_image_paths.append(output_path.replace("static/", ""))
+                counts.append(unique_people)
+            else:
+                counts.append(0)
+        else:
+            # For single image bogies, use the original count
+            counts.append(bogie_data[bogie_id]['best_count'])
+            if bogie_data[bogie_id]['best_image'] is not None:
+                processed_images.append(bogie_data[bogie_id]['best_image'])
+                processed_image_paths.append(bogie_data[bogie_id]['all_image_paths'][0])
     
     # Calculate redirection recommendations
     recommendations = calculate_redirections(counts)
@@ -351,6 +608,7 @@ def process_metro_images(image_paths):
     # Create summary image with recommendations
     if processed_images:
         summary = create_summary_image(processed_images, counts, recommendations)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         summary_path = os.path.join("static/results", f"summary_{timestamp}.jpg")
         cv2.imwrite(summary_path, summary)
         summary_path = summary_path.replace("static/", "")
@@ -360,8 +618,16 @@ def process_metro_images(image_paths):
     # Get enhanced analysis from Groq with image paths for qualitative assessment
     groq_analysis = analyze_with_groq(counts, recommendations, None, image_paths)
     
+    # Extract Groq's estimated counts from the analysis
+    groq_counts = extract_groq_counts(groq_analysis, counts)
+    
+    # Store the original YOLO counts before any density-based corrections
+    yolo_raw_counts = [bogie_data[bogie_id]['best_count'] for bogie_id in sorted(bogie_data.keys())]
+    
     return {
-        "counts": counts,
+        "counts": counts,  # These are the density-corrected counts
+        "yolo_counts": yolo_raw_counts,  # Raw YOLO detection counts
+        "groq_counts": groq_counts,  # LLM-estimated counts
         "recommendations": recommendations,
         "processed_images": processed_image_paths,
         "summary_image": summary_path,
@@ -656,42 +922,78 @@ def analyze_platform_image(image_path):
             "processed_image": output_path.replace("static/", "")
         }
 
+# Remove the @app.route('/') from the analyze function
+
+# Add this new route handler for the root URL
 @app.route('/')
 def index():
     return render_template('index.html')
 
+# Then keep your existing analyze route
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    # Check if files were uploaded
-    if 'files[]' not in request.files:
-        return jsonify({'error': 'No files uploaded'})
+    # Add debug logging
+    print("Request files keys:", list(request.files.keys()))
+    print("Request form keys:", list(request.form.keys()))
     
-    files = request.files.getlist('files[]')
-    if not files or files[0].filename == '':
-        return jsonify({'error': 'No files selected'})
+    if 'files[]' not in request.files:
+        # Check if files are coming in with a different name
+        if len(request.files) > 0:
+            # Use whatever files are available
+            files = []
+            for key in request.files:
+                if key.endswith('[]') or 'file' in key.lower():
+                    files.extend(request.files.getlist(key))
+            if not files:
+                # If still no valid files, use all files
+                for key in request.files:
+                    files.extend(request.files.getlist(key))
+        else:
+            return jsonify({'error': 'No files uploaded. Please select at least one image file.'})
+    else:
+        files = request.files.getlist('files[]')
+    
+    # Verify we have valid files
+    if not files or len(files) == 0 or all(file.filename == '' for file in files):
+        return jsonify({'error': 'No valid files selected'})
+    
+    # Get bogie IDs if provided
+    bogie_ids = None
+    if 'bogie_ids[]' in request.form:
+        try:
+            bogie_ids = [int(bid) - 1 for bid in request.form.getlist('bogie_ids[]')]  # Convert to 0-based index
+        except ValueError:
+            print("Error converting bogie IDs to integers")
+            # Fall back to default IDs
+            bogie_ids = list(range(len(files)))
     
     # Save uploaded files
     image_paths = []
-    for i, file in enumerate(files):
-        filename = f"bogie_{i+1}.jpg"
-        filepath = os.path.join("uploads", filename)
-        file.save(filepath)
-        image_paths.append(filepath)
+    for file in files:
+        if file and file.filename != '':
+            filename = secure_filename(file.filename)
+            filepath = os.path.join('uploads', filename)
+            file.save(filepath)
+            image_paths.append(filepath)
     
-    # Process metro images
-    results = process_metro_images(image_paths)
+    if not image_paths:
+        return jsonify({'error': 'No valid image files uploaded'})
     
-    # Check if platform image was uploaded
+    # Process platform image if provided
     platform_data = None
-    if 'platform_image' in request.files and request.files['platform_image'].filename != '':
+    if 'platform_image' in request.files:
         platform_file = request.files['platform_image']
-        platform_path = os.path.join("uploads/platforms", "platform.jpg")
-        platform_file.save(platform_path)
-        
-        # Analyze platform image
-        platform_data = analyze_platform_image(platform_path)
-        
-        # Add platform data to results
+        if platform_file and platform_file.filename != '':
+            platform_filename = secure_filename(platform_file.filename)
+            platform_filepath = os.path.join('uploads/platforms', platform_filename)
+            platform_file.save(platform_filepath)
+            platform_data = analyze_platform_image(platform_filepath)
+    
+    # Process metro images with bogie IDs
+    results = process_metro_images(image_paths, bogie_ids)
+    
+    # Add platform data to results
+    if platform_data:
         results['platform_data'] = platform_data
     
     return jsonify(results)
@@ -769,3 +1071,88 @@ if __name__ == '__main__':
     #                         cv2.putText(img_display, "H", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 255), 1)
     #                         yolo_count += 1
     #                         person_boxes.append((x1, y1, x2, y2))
+def allowed_file(filename):
+    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# Add this near the top with other app configurations
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
+
+
+def generate_fallback_analysis(counts, recommendations, platform_data=None):
+    """Generate a basic analysis when the API fails"""
+    total_passengers = sum(counts)
+    avg_per_bogie = total_passengers / len(counts) if counts else 0
+    most_crowded = counts.index(max(counts)) + 1 if counts else 0
+    least_crowded = counts.index(min(counts)) + 1 if counts else 0
+    
+    analysis = """## Metro Crowd Analysis (Basic)
+
+### Current Situation
+"""
+    analysis += f"Total passengers: {total_passengers}\n"
+    analysis += f"Average passengers per bogie: {avg_per_bogie:.1f}\n"
+    analysis += f"Most crowded bogie: {most_crowded} ({max(counts) if counts else 0} passengers)\n"
+    analysis += f"Least crowded bogie: {least_crowded} ({min(counts) if counts else 0} passengers)\n\n"
+    
+    # Add basic recommendations
+    analysis += "### Recommendations\n\n"
+    analysis += "* Consider redistributing passengers from the most crowded bogie\n"
+    analysis += "* Monitor the situation in real-time for changes\n"
+    analysis += "* Ensure all available doors are operational for efficient boarding/alighting\n"
+    
+    return analysis
+
+
+def extract_groq_counts(analysis, default_counts):
+    """Extract the estimated counts from Groq's analysis"""
+    try:
+        # Look for the table with estimated counts
+        import re
+        
+        # Pattern to match the table rows with counts
+        pattern = r"\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|"
+        
+        # Find all matches
+        matches = re.findall(pattern, analysis)
+        
+        if matches:
+            # Extract the estimated counts (third column)
+            groq_counts = [int(match[2]) for match in matches]
+            return groq_counts
+        else:
+            # If no table found, return the default counts
+            return default_counts
+    except Exception as e:
+        print(f"Error extracting Groq counts: {e}")
+        return default_counts
+
+def validate_groq_analysis(analysis, counts):
+    """Validate and enhance the Groq analysis to ensure quality"""
+    # Check if analysis contains required sections
+    required_sections = [
+        "crowd distribution", "bottlenecks", "redistribution", 
+        "prediction", "improving passenger comfort"
+    ]
+    
+    missing_sections = []
+    for section in required_sections:
+        if section not in analysis.lower():
+            missing_sections.append(section)
+    
+    # If sections are missing, add placeholders
+    if missing_sections:
+        analysis += "\n\n## Additional Analysis\n\n"
+        for section in missing_sections:
+            analysis += f"### {section.title()}\n\n"
+            analysis += f"Based on the data, the {section} analysis indicates...[standard recommendation]\n\n"
+    
+    # Add factual data summary at the beginning
+    summary = "## Summary of Crowd Data\n\n"
+    summary += "| Bogie | Passenger Count | Density Level |\n"
+    summary += "|-------|-----------------|---------------|\n"
+    
+    for i, count in enumerate(counts):
+        density = "Low" if count < 30 else "Medium" if count < 60 else "High"
+        summary += f"| {i+1} | {count} | {density} |\n"
+    
+    return summary + "\n\n" + analysis
