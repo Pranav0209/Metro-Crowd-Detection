@@ -7,3 +7,5 @@ __pycache__/
 *.dylib
 *.so
 .DS_Store
+.vscode
+

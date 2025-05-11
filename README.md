@@ -96,4 +96,3 @@ else:
     color = (0, 0, 255)  # Red - High
 ```
 ➡️ Adjust thresholds and RGB color values to your preference
-

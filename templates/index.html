@@ -89,6 +89,85 @@
             border-radius: 10px;
             padding: 20px;
             margin-top: 20px;
+            max-height: 800px;
+            overflow-y: auto;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .analysis-section h1, 
+        .analysis-section h2, 
+        .analysis-section h3 {
+            color: #2575fc;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .analysis-section table {
+            width: 100%;
+            margin-bottom: 1.5rem;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .analysis-section table th,
+        .analysis-section table td {
+            padding: 0.5rem;
+            border: 1px solid #dee2e6;
+            text-align: center;
+        }
+        
+        .analysis-section table thead th {
+            background-color: #e9ecef;
+            color: #495057;
+            font-weight: 600;
+        }
+        
+        .analysis-section table tbody tr:nth-of-type(odd) {
+            background-color: rgba(0, 0, 0, 0.02);
+        }
+        
+        .analysis-section table tbody tr:hover {
+            background-color: rgba(0, 123, 255, 0.05);
+        }
+        
+        .analysis-section blockquote {
+            border-left: 4px solid #2575fc;
+            padding-left: 1rem;
+            color: #6c757d;
+            background-color: rgba(37, 117, 252, 0.05);
+            padding: 1rem;
+            border-radius: 0 4px 4px 0;
+        }
+        
+        .analysis-section ul, 
+        .analysis-section ol {
+            padding-left: 1.5rem;
+        }
+        
+        .analysis-section li {
+            margin-bottom: 0.5rem;
+        }
+        
+        .analysis-section p {
+            margin-bottom: 1rem;
+        }
+        
+        .analysis-section strong,
+        .analysis-section b {
+            color: #495057;
+        }
+        
+        .analysis-section h4 {
+            color: #6c757d;
+            font-size: 1.1rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        
+        .analysis-section hr {
+            margin: 1.5rem 0;
+            border-color: rgba(37, 117, 252, 0.2);
         }
         .bogie-card {
             transition: transform 0.3s;
@@ -115,6 +194,31 @@
         .active-car {
             background-color: #2575fc;
             color: white;
+            font-weight: bold;
+        }
+        
+        .bogie-image-container {
+            position: relative;
+            margin-bottom: 15px;
+            max-height: 300px;
+            overflow: hidden;
+        }
+        
+        .bogie-image {
+            width: 100%;
+            max-height: 250px;
+            object-fit: contain;
+            border-radius: 5px;
+        }
+        
+        .bogie-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
             font-weight: bold;
         }
     </style>
@@ -210,12 +314,45 @@
 
             <div class="row mt-4">
                 <div class="col-md-12">
-                    <div class="card">
-                        <div class="card-header">
-                            <i class="fas fa-brain"></i> AI-Enhanced Analysis (Groq)
+                    <div class="card shadow">
+                        <div class="card-header bg-primary text-white">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h4 class="mb-0"><i class="fas fa-brain"></i> AI-Enhanced Analysis (Groq LLM)</h4>
+                                <span class="badge bg-light text-primary">Powered by Groq LLM</span>
+                            </div>
                         </div>
                         <div class="card-body">
-                            <div id="groqAnalysis" class="analysis-section"></div>
+                            <div class="row mb-4">
+                                <div class="col-md-12">
+                                    <h5 class="border-bottom pb-2 text-primary"><i class="fas fa-chart-bar"></i> Model Count Comparison:</h5>
+                                    <div class="table-responsive">
+                                        <table class="table table-bordered table-hover">
+                                            <thead class="table-primary">
+                                                <tr>
+                                                    <th class="text-center">Bogie</th>
+                                                    <th class="text-center">YOLO Count</th>
+                                                    <th class="text-center">Density-Corrected Count</th>
+                                                    <th class="text-center">Groq LLM Estimated Count</th>
+                                                    <th class="text-center">Final Count</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="countComparisonTable">
+                                                <!-- Will be populated by JavaScript -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <h5 class="border-bottom pb-2 text-primary"><i class="fas fa-lightbulb"></i> Groq LLM Detailed Analysis:</h5>
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle"></i> This analysis provides AI-enhanced insights about passenger distribution and recommendations for crowd management.
+                                    </div>
+                                    <div id="groqAnalysis" class="analysis-section p-4 border rounded bg-light shadow-sm"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -485,22 +622,99 @@
                         resultsSection.style.display = 'block';
                         
                         // Display summary image
-                        summaryImage.src = '/' + data.summary_image;
+                        summaryImage.src = '/static/results/' + data.summary_image.split('/').pop();
                         
                         // Display recommendations
                         recommendations.textContent = data.recommendations;
                         
                         // Display Groq analysis with markdown formatting
                         if (data.groq_analysis) {
-                            groqAnalysis.innerHTML = marked.parse(data.groq_analysis);
+                            try {
+                                // Parse the markdown content
+                                const parsedContent = marked.parse(data.groq_analysis);
+                                groqAnalysis.innerHTML = parsedContent;
+                                
+                                // Apply additional styling to tables
+                                const tables = groqAnalysis.querySelectorAll('table');
+                                tables.forEach(table => {
+                                    table.classList.add('table', 'table-bordered', 'table-hover', 'table-striped', 'mb-4');
+                                    
+                                    // Add Bootstrap classes to table headers
+                                    const headers = table.querySelectorAll('th');
+                                    headers.forEach(header => {
+                                        header.classList.add('bg-light');
+                                    });
+                                });
+                                
+                                // Apply styling to headings
+                                const headings = groqAnalysis.querySelectorAll('h1, h2, h3, h4, h5, h6');
+                                headings.forEach(heading => {
+                                    heading.classList.add('mt-4', 'mb-3');
+                                    
+                                    // Add different styling based on heading level
+                                    if (heading.tagName === 'H2') {
+                                        heading.classList.add('text-primary', 'border-bottom', 'pb-2');
+                                    } else if (heading.tagName === 'H3') {
+                                        heading.classList.add('text-secondary');
+                                    }
+                                });
+                                
+                                // Style lists
+                                const lists = groqAnalysis.querySelectorAll('ul, ol');
+                                lists.forEach(list => {
+                                    list.classList.add('mb-3');
+                                });
+                                
+                                // Style blockquotes
+                                const blockquotes = groqAnalysis.querySelectorAll('blockquote');
+                                blockquotes.forEach(quote => {
+                                    quote.classList.add('border-start', 'border-4', 'border-primary', 'ps-3', 'py-2', 'bg-light');
+                                });
+                            } catch (e) {
+                                console.error("Error parsing markdown:", e);
+                                groqAnalysis.innerHTML = '<div class="alert alert-warning">Error formatting analysis. Raw content:</div>' + 
+                                                        '<pre class="bg-light p-3">' + data.groq_analysis + '</pre>';
+                            }
                         } else {
-                            groqAnalysis.innerHTML = '<p>No enhanced analysis available.</p>';
+                            groqAnalysis.innerHTML = '<div class="alert alert-info">No enhanced analysis available.</div>';
+                        }
+                        
+                        // Populate count comparison table
+                        const countComparisonTable = document.getElementById('countComparisonTable');
+                        countComparisonTable.innerHTML = '';
+                        
+                        if (data.counts && data.yolo_counts && data.density_counts && data.groq_counts) {
+                            for (let i = 0; i < data.counts.length; i++) {
+                                const row = document.createElement('tr');
+                                
+                                // Determine row color based on crowd level
+                                let rowClass = '';
+                                if (data.counts[i] > 30) {
+                                    rowClass = 'table-danger';
+                                } else if (data.counts[i] > 15) {
+                                    rowClass = 'table-warning';
+                                } else {
+                                    rowClass = 'table-success';
+                                }
+                                row.className = rowClass;
+                                
+                                // Create cells
+                                row.innerHTML = `
+                                    <td class="text-center"><strong>Bogie ${i+1}</strong></td>
+                                    <td class="text-center">${data.yolo_counts[i]}</td>
+                                    <td class="text-center">${data.density_counts[i]}</td>
+                                    <td class="text-center">${data.groq_counts[i]}</td>
+                                    <td class="text-center"><strong>${data.counts[i]}</strong></td>
+                                `;
+                                
+                                countComparisonTable.appendChild(row);
+                            }
                         }
                         
                         // Display platform results if available
                         if (data.platform_data) {
                             platformResultsSection.style.display = 'block';
-                            platformImage.src = '/' + data.platform_data.processed_image;
+                            platformImage.src = '/static/results/' + data.platform_data.processed_image.split('/').pop();
                             platformPeopleCount.textContent = data.platform_data.total_people;
                             platformYoloCount.textContent = data.platform_data.yolo_count;
                             platformDensityScore.textContent = data.platform_data.density_score.toFixed(2);
@@ -530,17 +744,36 @@
                         // Group images by bogie ID
                         const bogieGroups = {};
                         
+                        // Log the processed images for debugging
+                        console.log("Processed images:", data.processed_images);
+                        
+                        // Extract bogie ID from image path
                         data.processed_images.forEach((imagePath, index) => {
                             const count = data.counts[index];
                             const yoloCount = data.yolo_counts ? data.yolo_counts[index] : count;
+                            const densityCount = data.density_counts ? data.density_counts[index] : count;
                             const groqCount = data.groq_counts ? data.groq_counts[index] : count;
-                            const bogieId = index + 1;
+                            
+                            // Extract bogie ID from the filename
+                            let bogieId = index + 1; // Default fallback
+                            
+                            // Try to extract bogie ID from filename (e.g., bogie_1_combined_...)
+                            const filename = imagePath.split('/').pop();
+                            const match = filename.match(/bogie_(\d+)/i);
+                            if (match && match[1]) {
+                                bogieId = parseInt(match[1]);
+                                console.log(`Extracted bogie ID ${bogieId} from filename ${filename}`);
+                            }
+                            
+                            // Log each image path for debugging
+                            console.log(`Bogie ${bogieId} image path:`, imagePath);
                             
                             if (!bogieGroups[bogieId]) {
                                 bogieGroups[bogieId] = {
                                     images: [],
                                     count: count,
                                     yoloCount: yoloCount,
+                                    densityCount: densityCount,
                                     groqCount: groqCount
                                 };
                             }
@@ -553,6 +786,7 @@
                             const group = bogieGroups[bogieId];
                             const count = group.count;
                             const yoloCount = group.yoloCount;
+                            const densityCount = group.densityCount;
                             const groqCount = group.groqCount;
                             
                             let densityClass = 'low-density';
@@ -577,45 +811,39 @@
                                         </div>
                                     </div>
                                     <div class="card-body">
-                                        <div class="row">
-                                            <div class="col-md-8">
-                                                <div class="bogie-image-container">
-                                                    <img src="/${group.images[0]}" class="bogie-image" alt="Bogie ${bogieId}">
-                                                    <div class="bogie-label">Bogie ${bogieId}</div>
-                                                </div>
-                                            </div>
-                                            <div class="col-md-4">
-                                                <div class="count-comparison">
-                                                    <h6>Passenger Count Comparison:</h6>
-                                                    <table class="table table-sm">
-                                                        <thead>
-                                                            <tr>
-                                                                <th>Method</th>
-                                                                <th>Count</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            <tr>
-                                                                <td>YOLO</td>
-                                                                <td>${yoloCount}</td>
-                                                            </tr>
-                                                            <tr>
-                                                                <td>Density</td>
-                                                                <td>${count}</td>
-                                                            </tr>
-                                                            <tr>
-                                                                <td>Groq LLM</td>
-                                                                <td>${groqCount}</td>
-                                                            </tr>
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                                <div class="bogie-position mt-3">
-                                                    <h6>Position in Train:</h6>
-                                                    <div class="train-diagram">
-                                                        ${createTrainDiagram(bogieId, 6)}
-                                                    </div>
-                                                </div>
+                                        <div class="bogie-image-container mb-3">
+                                            <img src="/static/results/${group.images[0].split('/').pop()}" class="bogie-image" alt="Bogie ${bogieId}">
+                                        </div>
+                                        
+                                        <div class="count-comparison">
+                                            <h6>Passenger Count Comparison:</h6>
+                                            <table class="table table-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Method</th>
+                                                        <th>Count</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr>
+                                                        <td>YOLO</td>
+                                                        <td>${yoloCount}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Density</td>
+                                                        <td>${densityCount}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Groq LLM</td>
+                                                        <td>${groqCount}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div class="bogie-position mt-3">
+                                            <h6>Position in Train:</h6>
+                                            <div class="train-diagram">
+                                                ${createTrainDiagram(bogieId, 6)}
                                             </div>
                                         </div>
                                     </div>
@@ -647,6 +875,15 @@
                     alert('Error: ' + error.message);
                 });
             });
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        // Configure marked.js to handle tables
+        marked.use({
+            gfm: true,
+            breaks: true,
+            tables: true
         });
     </script>
 </body>
