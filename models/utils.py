@@ -125,9 +125,10 @@ def match_people_across_images(bogie_data):
         yolo_counts: List of YOLO counts for each bogie
         density_counts: List of density-based counts for each bogie
         groq_counts: List of Groq LLM counts for each bogie
-        yolo_counts: List of YOLO model counts
-        density_counts: List of density-based counts
-        groq_counts: List of Groq LLM counts
+        standing_counts: List of standing people counts for each bogie
+        sitting_counts: List of sitting people counts for each bogie
+        adjusted_sitting_counts: List of adjusted sitting counts (accounting for all seats)
+        all_seats_occupied_flags: List of flags indicating if all seats are occupied
     """
     counts = []
     processed_images = []
@@ -135,22 +136,29 @@ def match_people_across_images(bogie_data):
     yolo_counts = []
     density_counts = []
     groq_counts = []
+    standing_counts = []
+    sitting_counts = []
+    adjusted_sitting_counts = []
+    all_seats_occupied_flags = []
     
     for bogie_id in sorted(bogie_data.keys()):
         # Extract model-specific counts
         yolo_count = bogie_data[bogie_id].get('yolo_count', 0)
         density_count = bogie_data[bogie_id].get('density_count', 0)
         groq_count = bogie_data[bogie_id].get('groq_count', 0)
+        standing_count = bogie_data[bogie_id].get('standing_count', 0)
+        sitting_count = bogie_data[bogie_id].get('sitting_count', 0)
+        adjusted_sitting_count = bogie_data[bogie_id].get('adjusted_sitting_count', sitting_count)
+        all_seats_occupied = bogie_data[bogie_id].get('all_seats_occupied', False)
         
         # Store model-specific counts
         yolo_counts.append(yolo_count)
         density_counts.append(density_count)
         groq_counts.append(groq_count)
-        
-        # Get the model counts for this bogie
-        yolo_count = bogie_data[bogie_id].get('yolo_count', 0)
-        density_count = bogie_data[bogie_id].get('density_count', 0)
-        groq_count = bogie_data[bogie_id].get('groq_count', 0)
+        standing_counts.append(standing_count)
+        sitting_counts.append(sitting_count)
+        adjusted_sitting_counts.append(adjusted_sitting_count)
+        all_seats_occupied_flags.append(all_seats_occupied)
         
         # If we have multiple images for this bogie, perform matching
         if len(bogie_data[bogie_id]['all_images']) > 1:
@@ -228,7 +236,7 @@ def match_people_across_images(bogie_data):
                 processed_images.append(bogie_data[bogie_id]['best_image'])
                 processed_image_paths.append(bogie_data[bogie_id]['all_image_paths'][0])
     
-    return counts, processed_images, processed_image_paths, yolo_counts, density_counts, groq_counts
+    return counts, processed_images, processed_image_paths, yolo_counts, density_counts, groq_counts, standing_counts, sitting_counts, adjusted_sitting_counts, all_seats_occupied_flags
 
 def allowed_file(filename):
     """Check if a file has an allowed extension

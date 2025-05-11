@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from models.posture_detector import PostureDetector
 
 class YOLODetector:
     def __init__(self, weights_path="Yolo-Weights/yolov8l.pt"):
@@ -11,13 +12,15 @@ class YOLODetector:
             weights_path: Path to the YOLO weights file
         """
         self.model = YOLO(weights_path)
+        self.posture_detector = PostureDetector(yolo_model=self.model)
     
-    def detect_people(self, img, conf_threshold=0.15):
+    def detect_people(self, img, conf_threshold=0.15, detect_posture=True):
         """Detect people in an image using YOLO
         
         Args:
             img: Input image (numpy array)
             conf_threshold: Confidence threshold for detection
+            detect_posture: Whether to detect posture (standing/sitting)
             
         Returns:
             results: YOLO detection results
@@ -25,6 +28,7 @@ class YOLODetector:
             person_features: List of features for detected people
             yolo_count: Number of people detected
             img_display: Image with bounding boxes drawn
+            posture_data: Optional posture detection results
         """
         print(f"YOLO detect_people called with conf_threshold={conf_threshold}")
         
@@ -40,53 +44,101 @@ class YOLODetector:
         yolo_count = 0
         person_boxes = []
         person_features = []
+        posture_data = None
         
-        # Extract all person detections
-        for r in results:
-            print(f"Processing batch with {len(r.boxes)} detections")
-            for box in r.boxes:
-                cls = int(box.cls[0])
-                box_conf = box.conf[0]
-                print(f"Detection: class={cls} ({self.model.names[cls]}), confidence={box_conf:.2f}")
-                if self.model.names[cls] == "person" and box_conf > conf_threshold:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+        # Perform posture detection if requested
+        if detect_posture:
+            posture_data = self.posture_detector.detect_postures(img)
+            # Use the posture detector's visualization
+            img_display = self.posture_detector.visualize_postures(img_display, posture_data)
+            
+            # Extract counts
+            standing_count = posture_data['standing_count']
+            sitting_count = posture_data['sitting_count']
+            yolo_count = posture_data['total_count']
+            
+            print(f"Posture detection results: {standing_count} standing, {sitting_count} sitting")
+            
+            # Extract boxes and features
+            for box_info in posture_data['boxes']:
+                x1, y1, x2, y2 = box_info['box']
+                posture = box_info['posture']
+                
+                # Extract person region for feature calculation
+                person_roi = img[y1:y2, x1:x2]
+                if person_roi.size == 0:  # Skip if ROI is empty
+                    continue
                     
-                    # Extract person region for feature calculation
-                    person_roi = img[y1:y2, x1:x2]
-                    if person_roi.size == 0:  # Skip if ROI is empty
-                        continue
+                # Calculate simple feature vector (color histogram)
+                try:
+                    # Resize to standard size
+                    person_roi = cv2.resize(person_roi, (64, 128))
+                    
+                    # Calculate color histogram as feature
+                    hist_b = cv2.calcHist([person_roi], [0], None, [8], [0, 256])
+                    hist_g = cv2.calcHist([person_roi], [1], None, [8], [0, 256])
+                    hist_r = cv2.calcHist([person_roi], [2], None, [8], [0, 256])
+                    
+                    # Normalize and flatten
+                    hist_b = cv2.normalize(hist_b, hist_b).flatten()
+                    hist_g = cv2.normalize(hist_g, hist_g).flatten()
+                    hist_r = cv2.normalize(hist_r, hist_r).flatten()
+                    
+                    # Combine features
+                    feature = np.concatenate([hist_b, hist_g, hist_r])
+                    
+                    # Store feature and box
+                    person_features.append(feature)
+                    person_boxes.append((x1, y1, x2, y2))
+                except Exception as e:
+                    print(f"Error processing person ROI: {e}")
+        else:
+            # Extract all person detections using the original method
+            for r in results:
+                print(f"Processing batch with {len(r.boxes)} detections")
+                for box in r.boxes:
+                    cls = int(box.cls[0])
+                    box_conf = box.conf[0]
+                    print(f"Detection: class={cls} ({self.model.names[cls]}), confidence={box_conf:.2f}")
+                    if self.model.names[cls] == "person" and box_conf > conf_threshold:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
                         
-                    # Calculate simple feature vector (color histogram)
-                    try:
-                        # Resize to standard size
-                        person_roi = cv2.resize(person_roi, (64, 128))
-                        
-                        # Calculate color histogram as feature
-                        hist_b = cv2.calcHist([person_roi], [0], None, [8], [0, 256])
-                        hist_g = cv2.calcHist([person_roi], [1], None, [8], [0, 256])
-                        hist_r = cv2.calcHist([person_roi], [2], None, [8], [0, 256])
-                        
-                        # Normalize and flatten
-                        hist_b = cv2.normalize(hist_b, hist_b).flatten()
-                        hist_g = cv2.normalize(hist_g, hist_g).flatten()
-                        hist_r = cv2.normalize(hist_r, hist_r).flatten()
-                        
-                        # Combine features
-                        feature = np.concatenate([hist_b, hist_g, hist_r])
-                        
-                        # Store feature and box
-                        person_features.append(feature)
-                        person_boxes.append((x1, y1, x2, y2))
-                        
-                        # Draw bounding box
-                        cv2.rectangle(img_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        # Add confidence score
-                        cv2.putText(img_display, f"{box_conf:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                        yolo_count += 1
-                    except Exception as e:
-                        print(f"Error processing person ROI: {e}")
+                        # Extract person region for feature calculation
+                        person_roi = img[y1:y2, x1:x2]
+                        if person_roi.size == 0:  # Skip if ROI is empty
+                            continue
+                            
+                        # Calculate simple feature vector (color histogram)
+                        try:
+                            # Resize to standard size
+                            person_roi = cv2.resize(person_roi, (64, 128))
+                            
+                            # Calculate color histogram as feature
+                            hist_b = cv2.calcHist([person_roi], [0], None, [8], [0, 256])
+                            hist_g = cv2.calcHist([person_roi], [1], None, [8], [0, 256])
+                            hist_r = cv2.calcHist([person_roi], [2], None, [8], [0, 256])
+                            
+                            # Normalize and flatten
+                            hist_b = cv2.normalize(hist_b, hist_b).flatten()
+                            hist_g = cv2.normalize(hist_g, hist_g).flatten()
+                            hist_r = cv2.normalize(hist_r, hist_r).flatten()
+                            
+                            # Combine features
+                            feature = np.concatenate([hist_b, hist_g, hist_r])
+                            
+                            # Store feature and box
+                            person_features.append(feature)
+                            person_boxes.append((x1, y1, x2, y2))
+                            
+                            # Draw bounding box
+                            cv2.rectangle(img_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            # Add confidence score
+                            cv2.putText(img_display, f"{box_conf:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                            yolo_count += 1
+                        except Exception as e:
+                            print(f"Error processing person ROI: {e}")
         
-        return results, person_boxes, person_features, yolo_count, img_display
+        return results, person_boxes, person_features, yolo_count, img_display, posture_data
     
     def detect_seated_people(self, img, person_boxes, conf_threshold=0.08):
         """Detect seated people in an image using YOLO with special criteria

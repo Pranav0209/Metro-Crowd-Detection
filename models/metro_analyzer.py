@@ -43,7 +43,9 @@ class MetroAnalyzer:
                     'best_image': None,     # Store the image with most detections
                     'best_count': 0,        # Store the highest detection count
                     'all_images': [],       # Store all processed images
-                    'all_image_paths': []   # Store all processed image paths
+                    'all_image_paths': [],  # Store all processed image paths
+                    'standing_count': 0,    # Store count of standing people
+                    'sitting_count': 0      # Store count of sitting people
                 }
             
             # Load the image
@@ -55,20 +57,52 @@ class MetroAnalyzer:
             
             print(f"Image shape: {img.shape}")
             
-            # Detect people using YOLO
-            print("Running YOLO detection...")
-            _, person_boxes, person_features, yolo_count, img_display = self.yolo_detector.detect_people(img)
+            # Detect people using YOLO with posture detection
+            print("Running YOLO detection with posture analysis...")
+            _, person_boxes, person_features, yolo_count, img_display, posture_data = self.yolo_detector.detect_people(
+                img, detect_posture=True
+            )
             print(f"YOLO detection found {yolo_count} people")
             
-            # Detect seated people
-            new_person_boxes, new_person_features, seated_count, img_display = self.yolo_detector.detect_seated_people(
-                img, person_boxes
-            )
+            # Store posture data if available
+            standing_count = 0
+            sitting_count = 0
+            adjusted_sitting_count = 0
+            all_seats_occupied = False
             
-            # Update counts and boxes
-            yolo_count += seated_count
-            person_boxes.extend(new_person_boxes)
-            person_features.extend(new_person_features)
+            if posture_data:
+                standing_count = posture_data['standing_count']
+                sitting_count = posture_data['sitting_count']
+                adjusted_sitting_count = posture_data.get('adjusted_sitting_count', sitting_count)
+                all_seats_occupied = posture_data.get('all_seats_occupied', False)
+                
+                # Update the YOLO count with the adjusted total
+                yolo_count = posture_data['total_count']
+                
+                print(f"Posture analysis: {standing_count} standing, {sitting_count} sitting")
+                if all_seats_occupied:
+                    print(f"Adjusted count: All {adjusted_sitting_count} seats occupied + {standing_count} standing = {yolo_count} total")
+            else:
+                # Fallback to the old method if posture detection failed
+                new_person_boxes, new_person_features, seated_count, img_display = self.yolo_detector.detect_seated_people(
+                    img, person_boxes
+                )
+                
+                # Update counts and boxes
+                sitting_count = seated_count
+                standing_count = yolo_count
+                
+                # Apply the metro train logic: if people are standing, all seats must be occupied
+                if standing_count > 0:
+                    all_seats_occupied = True
+                    adjusted_sitting_count = max(sitting_count, 43)  # 43 seats per bogie
+                    yolo_count = standing_count + adjusted_sitting_count
+                else:
+                    adjusted_sitting_count = sitting_count
+                    yolo_count += seated_count
+                
+                person_boxes.extend(new_person_boxes)
+                person_features.extend(new_person_features)
             
             # Apply density-based correction (Model 2)
             density_count = self.yolo_detector.apply_density_correction(img, person_boxes, yolo_count)
@@ -98,13 +132,35 @@ class MetroAnalyzer:
             cv2.putText(overlay, f"Status: {crowd_level}", 
                         (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                         
-            # Store all three model counts in the bogie data
+            # Store all model counts in the bogie data
             if 'yolo_count' not in bogie_data[bogie_id]:
                 bogie_data[bogie_id]['yolo_count'] = yolo_count
             if 'density_count' not in bogie_data[bogie_id]:
                 bogie_data[bogie_id]['density_count'] = density_count
             if 'groq_count' not in bogie_data[bogie_id]:
                 bogie_data[bogie_id]['groq_count'] = groq_count
+            
+            # Store posture counts
+            bogie_data[bogie_id]['standing_count'] = max(bogie_data[bogie_id].get('standing_count', 0), standing_count)
+            bogie_data[bogie_id]['sitting_count'] = max(bogie_data[bogie_id].get('sitting_count', 0), sitting_count)
+            bogie_data[bogie_id]['adjusted_sitting_count'] = max(bogie_data[bogie_id].get('adjusted_sitting_count', 0), adjusted_sitting_count)
+            bogie_data[bogie_id]['all_seats_occupied'] = bogie_data[bogie_id].get('all_seats_occupied', False) or all_seats_occupied
+            
+            # Add posture information to the overlay
+            if all_seats_occupied:
+                cv2.putText(overlay, f"Crowded Train - {standing_count} standing | All {adjusted_sitting_count} seats occupied", 
+                            (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(overlay, f"Total adjusted count: {yolo_count} (Full capacity calculation)", 
+                            (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            else:
+                if standing_count > 0:
+                    cv2.putText(overlay, f"Not Crowded - {standing_count} standing (below threshold) | {sitting_count} sitting", 
+                                (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                else:
+                    cv2.putText(overlay, f"Not Crowded - No standing passengers | {sitting_count} sitting", 
+                                (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(overlay, f"Total count: {yolo_count} (Actual count)", 
+                            (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             # Save the processed image
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -123,7 +179,7 @@ class MetroAnalyzer:
                 bogie_data[bogie_id]['best_image'] = overlay
         
         # Second pass: match people across images of the same bogie to avoid double counting
-        counts, processed_images, processed_image_paths, yolo_counts, density_counts, groq_counts = match_people_across_images(bogie_data)
+        counts, processed_images, processed_image_paths, yolo_counts, density_counts, groq_counts, standing_counts, sitting_counts, adjusted_sitting_counts, all_seats_occupied_flags = match_people_across_images(bogie_data)
         
         # Calculate redirection recommendations
         recommendations = calculate_redirections(counts)
@@ -153,6 +209,10 @@ class MetroAnalyzer:
             "yolo_counts": yolo_counts,  # YOLO model counts
             "density_counts": density_counts,  # Density-based model counts
             "groq_counts": groq_counts,  # Groq LLM model counts
+            "standing_counts": standing_counts,  # Standing people counts
+            "sitting_counts": sitting_counts,  # Sitting people counts (detected)
+            "adjusted_sitting_counts": adjusted_sitting_counts,  # Adjusted sitting counts (accounting for all seats)
+            "all_seats_occupied_flags": all_seats_occupied_flags,  # Flags indicating if all seats are occupied
             "recommendations": recommendations,
             "processed_images": processed_image_paths,
             "summary_image": summary_path,

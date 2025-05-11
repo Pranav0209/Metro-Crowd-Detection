@@ -754,6 +754,12 @@
                             const densityCount = data.density_counts ? data.density_counts[index] : count;
                             const groqCount = data.groq_counts ? data.groq_counts[index] : count;
                             
+                            // Extract posture data if available
+                            const standingCount = data.standing_counts ? data.standing_counts[index] : undefined;
+                            const sittingCount = data.sitting_counts ? data.sitting_counts[index] : undefined;
+                            const adjustedSittingCount = data.adjusted_sitting_counts ? data.adjusted_sitting_counts[index] : sittingCount;
+                            const allSeatsOccupied = data.all_seats_occupied_flags ? data.all_seats_occupied_flags[index] : false;
+                            
                             // Extract bogie ID from the filename
                             let bogieId = index + 1; // Default fallback
                             
@@ -774,7 +780,11 @@
                                     count: count,
                                     yoloCount: yoloCount,
                                     densityCount: densityCount,
-                                    groqCount: groqCount
+                                    groqCount: groqCount,
+                                    standingCount: standingCount,
+                                    sittingCount: sittingCount,
+                                    adjustedSittingCount: adjustedSittingCount,
+                                    allSeatsOccupied: allSeatsOccupied
                                 };
                             }
                             
@@ -788,6 +798,10 @@
                             const yoloCount = group.yoloCount;
                             const densityCount = group.densityCount;
                             const groqCount = group.groqCount;
+                            const standingCount = group.standingCount;
+                            const sittingCount = group.sittingCount;
+                            const adjustedSittingCount = group.adjustedSittingCount;
+                            const allSeatsOccupied = group.allSeatsOccupied;
                             
                             let densityClass = 'low-density';
                             let densityText = 'Low Density';
@@ -837,6 +851,26 @@
                                                         <td>Groq LLM</td>
                                                         <td>${groqCount}</td>
                                                     </tr>
+                                                    ${standingCount !== undefined && sittingCount !== undefined ? `
+                                                    <tr class="table-info">
+                                                        <td>Standing</td>
+                                                        <td>${standingCount}</td>
+                                                    </tr>
+                                                    <tr class="table-info">
+                                                        <td>Sitting</td>
+                                                        <td>${sittingCount}</td>
+                                                    </tr>
+                                                    ${allSeatsOccupied ? `
+                                                    <tr class="table-warning">
+                                                        <td>Adjusted Sitting (All Seats)</td>
+                                                        <td>${adjustedSittingCount}</td>
+                                                    </tr>
+                                                    <tr class="table-success">
+                                                        <td><strong>Total with Adjustment</strong></td>
+                                                        <td><strong>${standingCount + adjustedSittingCount}</strong></td>
+                                                    </tr>
+                                                    ` : ''}
+                                                    ` : ''}
                                                 </tbody>
                                             </table>
                                         </div>
